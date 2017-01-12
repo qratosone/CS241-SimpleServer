@@ -35,7 +35,7 @@ const char *png = "image/png";
 const char *other = "text/plain";
 /**
  * Processes the request line of the HTTP header.
- * 
+ *
  * @param request The request line of the HTTP header.  This should be
  *                the first line of an HTTP request header and must
  *                NOT include the HTTP line terminator ("\r\n").
@@ -47,9 +47,9 @@ const char *other = "text/plain";
 
 void handle()
 {
-	
+
 	exit(0);
-	
+
 }
  const char * myparser(const char * input)
 {
@@ -62,7 +62,7 @@ void handle()
 		prev = curr;
 		curr = strtok(NULL, ".");
 	}while(curr != NULL);
-	
+
 	if(!strcmp(prev, "html"))
 		return html;
 	else if(!strcmp(prev, "css"))
@@ -119,181 +119,181 @@ void *slave(void *input) //pthread worker
 	// = receive client request =
 	// ==========================
 	int byte_count;
-while(1)
-{
 	while(1)
 	{
-		byte_count = recv(fd, buffer, 512, 0);
-		if(byte_count == -1)
+		while(1)
 		{
-			perror("recv:");
-			break;
+			byte_count = recv(fd, buffer, 512, 0);
+			if(byte_count == -1)
+			{
+				perror("recv:");
+				break;
+			}
+			if(byte_count == 0)
+			{
+				fprintf(stderr, "Client closed connection.\n");
+				close(fd);
+				pthread_exit(0);
+			}
+			//printf("bytes: %d\n", byte_count);
+			// printf("%s", buffer);
+			sprintf(main_buffer+strlen(main_buffer), buffer);
+			if(strstr(main_buffer,"\r\n\r\n"))
+			{
+				// printf("Found it!!!!!!!\n\n\n\n");
+				break;
+			}
+			memset(buffer,0,512);
 		}
-		if(byte_count == 0)
+		printf("%s\n", main_buffer);
+		// =====================
+		// = Parse the request =
+		// =====================
+		char *pch;
+		pch = strtok(main_buffer, "\r\n");
+		printf("%s\n",pch);
+		char *request = process_http_header_request(pch);
+		// printf("PARSED REQUEST: %s\n", request);
+		dictionary_t dic;
+		dictionary_init(&dic);
+		char *pch2;
+		do {
+			pch2 = strtok(NULL, "\r\n");
+			if(pch2){
+				// printf("PARSED: %s\n", pch2);
+				dictionary_parse(&dic, pch2);
+			}
+		} while(pch2);
+		printf("finished parsing.\n");
+		// =======================
+		// = generating response =
+		// =======================
+		char my_response[800000];
+		FILE *reply_file;
+		int status_code;
+		const char *response_string;
+		const char *content_type = other;
+		if(request==NULL)
 		{
-			fprintf(stderr, "Client closed connection.\n");
-			close(fd);
-			pthread_exit(0);
+			status_code = 501;
+			response_string = HTTP_501_STRING;
 		}
-		//printf("bytes: %d\n", byte_count);
-		// printf("%s", buffer);
-		sprintf(main_buffer+strlen(main_buffer), buffer);
-		if(strstr(main_buffer,"\r\n\r\n"))
-		{	
-			// printf("Found it!!!!!!!\n\n\n\n");
-			break;
-		}
-		memset(buffer,0,512);
-	}
-	printf("%s\n", main_buffer);
-	// =====================
-	// = Parse the request =
-	// =====================
-	char *pch;
-	pch = strtok(main_buffer, "\r\n");
-	printf("%s\n",pch);
-	char *request = process_http_header_request(pch);
-	// printf("PARSED REQUEST: %s\n", request);
-	dictionary_t dic;
-	dictionary_init(&dic);
-	char *pch2;
-	do {
-		pch2 = strtok(NULL, "\r\n");
-		if(pch2){
-			// printf("PARSED: %s\n", pch2);
-			dictionary_parse(&dic, pch2);
-		}
-	} while(pch2);
-	printf("finished parsing.\n");
-	// =======================
-	// = generating response =
-	// =======================
-	char my_response[800000];
-	FILE *reply_file;
-	int status_code;
-	const char *response_string;
-	const char *content_type = other;
-	if(request==NULL)
-	{
-		status_code = 501;
-		response_string = HTTP_501_STRING;
-	}
-	else
-	{
-		if(!strcmp(request,"/"))
+		else
 		{
-			reply_file = fopen("web/index.html","r");
-			status_code = 200;
-			response_string = HTTP_200_STRING;
-			content_type = html;
+			if(!strcmp(request,"/"))
+			{
+				reply_file = fopen("web/index.html","r");
+				status_code = 200;
+				response_string = HTTP_200_STRING;
+				content_type = html;
+			}
+			else{
+				content_type = myparser(request);
+				char prefix[100];
+				sprintf(prefix, "web");
+				sprintf(prefix+strlen(prefix), request);
+				printf("REQUESTED FILE PATH: %s\n", prefix);
+				reply_file = fopen(prefix, "r");
+				status_code = 200;
+				response_string = HTTP_200_STRING;
+			}
+			if(reply_file == NULL)
+			{
+				status_code = 404;
+				response_string = HTTP_404_STRING;
+			}
 		}
+		sprintf(my_response, "HTTP/1.1 %d %s\r\n", status_code, response_string);
+		sprintf(my_response+strlen(my_response), "Content-Type: %s\r\n", content_type);
+		long content_length;
+		if(status_code == 404)
+			content_length = strlen(HTTP_404_CONTENT);
+		else if(status_code == 501)
+			content_length = strlen(HTTP_501_CONTENT);
 		else{
-			content_type = myparser(request);
-			char prefix[100];
-			sprintf(prefix, "web");
-			sprintf(prefix+strlen(prefix), request);
-			printf("REQUESTED FILE PATH: %s\n", prefix);
-			reply_file = fopen(prefix, "r");
-			status_code = 200;
-			response_string = HTTP_200_STRING;
+			fseek(reply_file, 0, SEEK_END);
+			long pos = ftell(reply_file);
+			content_length = pos;
 		}
-		if(reply_file == NULL)
+		sprintf(my_response+strlen(my_response), "Content-Length: %ld\r\n", content_length);
+		const char *conn = dictionary_get(&dic, "Connection");
+		int result = 1;
+		if(conn != NULL)
 		{
-			status_code = 404;
-			response_string = HTTP_404_STRING;
-		}
-	}
-	sprintf(my_response, "HTTP/1.1 %d %s\r\n", status_code, response_string);
-	sprintf(my_response+strlen(my_response), "Content-Type: %s\r\n", content_type);
-	long content_length;
-	if(status_code == 404)
-		content_length = strlen(HTTP_404_CONTENT);
-	else if(status_code == 501)
-		content_length = strlen(HTTP_501_CONTENT);
-	else{
-		fseek(reply_file, 0, SEEK_END);
-		long pos = ftell(reply_file);
-		content_length = pos;
-	}
-	sprintf(my_response+strlen(my_response), "Content-Length: %ld\r\n", content_length);
-	const char *conn = dictionary_get(&dic, "Connection");
-	int result = 1;
-	if(conn != NULL)
-	{
-		result = strcasecmp(conn,"Keep-Alive");
-		if(result == 0){
-			sprintf(my_response+strlen(my_response), "Connection: Keep-Alive\r\n\r\n");
+			result = strcasecmp(conn,"Keep-Alive");
+			if(result == 0){
+				sprintf(my_response+strlen(my_response), "Connection: Keep-Alive\r\n\r\n");
+			}
+			else
+			{
+				sprintf(my_response+strlen(my_response), "Connection: close\r\n\r\n");
+			}
 		}
 		else
 		{
 			sprintf(my_response+strlen(my_response), "Connection: close\r\n\r\n");
 		}
-	}
-	else
-	{
-		sprintf(my_response+strlen(my_response), "Connection: close\r\n\r\n");
-	}
-	unsigned long total = 0;
-	while(1)
-	{
-		size_t num = send(fd, my_response + total, strlen(my_response) - total, 0);			
-		// printf("Bytes sent: %d\n", (int)num);
-		total += num;
-		// printf("Total bytes sent: %d\n", (int)total);
-		if(total == strlen(my_response))
+		unsigned long total = 0;
+		while(1)
+		{
+			size_t num = send(fd, my_response + total, strlen(my_response) - total, 0);
+			// printf("Bytes sent: %d\n", (int)num);
+			total += num;
+			// printf("Total bytes sent: %d\n", (int)total);
+			if(total == strlen(my_response))
+				break;
+		}
+		// ===========
+		// = PAYLOAD =
+		// ===========
+		unsigned long size;
+		char *payload = NULL;
+		if(status_code == 404)
+		{
+			payload = strdup(HTTP_404_CONTENT);
+		}
+		else if(status_code == 501)
+		{
+			payload = strdup(HTTP_501_CONTENT);
+		}
+		else{
+			fseek(reply_file, 0, SEEK_END);
+			unsigned long pos = ftell(reply_file);
+			fseek(reply_file, 0, SEEK_SET);
+
+			char *bytes = malloc(pos+5);
+			fread(bytes, pos, 1, reply_file);
+			size = pos;
+			fclose(reply_file);
+			payload = bytes;
+		}
+		total = 0;
+		while(1)
+		{
+			unsigned long num = send(fd, payload + total, size - total, 0);
+			// printf("%ld\n", num);
+			printf("%ld\n", num);
+			total += num;
+			if(total == size)
+				break;
+		}
+		free(payload);
+		if(request!=NULL)
+		{
+			free(request);
+			request = NULL;
+		}
+		printf("finished generating response.\n");
+		// ==================================
+		// = send the HTTP response to user =
+		// ==================================
+
+		memset(main_buffer, 0, 2048);
+		memset(buffer, 0, 513);
+		dictionary_destroy(&dic);
+		if(result!=0)
 			break;
 	}
-	// ===========
-	// = PAYLOAD =
-	// ===========
-	unsigned long size;
-	char *payload = NULL;
-	if(status_code == 404)
-	{
-		payload = strdup(HTTP_404_CONTENT);
-	}
-	else if(status_code == 501)
-	{
-		payload = strdup(HTTP_501_CONTENT);
-	}
-	else{
-		fseek(reply_file, 0, SEEK_END);
-		unsigned long pos = ftell(reply_file);
-		fseek(reply_file, 0, SEEK_SET);
-
-		char *bytes = malloc(pos+5);
-		fread(bytes, pos, 1, reply_file);
-		size = pos;
-		fclose(reply_file);
-		payload = bytes;
-	}
-	total = 0;
-	while(1)
-	{
-		unsigned long num = send(fd, payload + total, size - total, 0);
-		// printf("%ld\n", num);
-		printf("%ld\n", num);
-		total += num;
-		if(total == size)
-			break;
-	}
-	free(payload);
-	if(request!=NULL)
-	{
-		free(request);
-		request = NULL;
-	}
-	printf("finished generating response.\n");
-	// ==================================
-	// = send the HTTP response to user =
-	// ==================================
-
-	memset(main_buffer, 0, 2048);
-	memset(buffer, 0, 513);
-	dictionary_destroy(&dic);
-	if(result!=0)
-		break;
-}
 	close(fd);
 	printf("file descriptor closed.\n");
 	printf("%s", main_buffer);
@@ -331,7 +331,7 @@ int main(int argc, char **argv)
 	int yes = 1;
 	char s[INET6_ADDRSTRLEN];
 	int rv;
-	
+
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
@@ -343,7 +343,7 @@ int main(int argc, char **argv)
 	{
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
 	}
-	
+
 	// loop through all the results and bind to the first we can
 	for(p = servinfo; p != NULL; p = p -> ai_next)
 	{
@@ -355,12 +355,12 @@ int main(int argc, char **argv)
 			perror("server: socket");
 			continue;
 		}
-		
+
 		if(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int))==-1)
 		{
 			perror("setsockopt");
 		}
-		
+
 		// =============================
 		// = bind socket to my address =
 		// =============================
@@ -369,17 +369,17 @@ int main(int argc, char **argv)
 			perror("server: bind");
 			continue;
 		}
-		
+
 		break;
 	}
-	
+
 	if(p == NULL)
 	{
 		fprintf(stderr, "server: fail to bind\n");
 		return 2;
 	}
 	freeaddrinfo(servinfo); //all done with this structure
-	
+
 	// ========================================
 	// = set socket to passive listening state =
 	// ========================================
@@ -388,9 +388,9 @@ int main(int argc, char **argv)
 		perror("listen");
 		exit(1);
 	}
-	
+
 	printf("server: waiting for connections...\n");
-	
+
 	struct sigaction sa;
 	sa.sa_handler = handle;
 	sa.sa_flags = 0;
@@ -399,8 +399,8 @@ int main(int argc, char **argv)
 	// ==========
 	// = PART 2 =
 	// ==========
-	
-	
+
+
 	while(1) {  // main accept() loop
 		printf("Got here.\n");
 		sin_size = sizeof(their_addr);
@@ -415,10 +415,10 @@ int main(int argc, char **argv)
 		pthread_t pid;
 		pthread_create(&pid, NULL, slave, &new_fd);
 	}
-	
+
 	// ================
 	// = Catch Signal =
 	// ================
-	
+
 	return 0;
 }
